@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>職員食 予約</title>
+<style>
+:root{--main:#2e7d5b;--bg:#f5f6f3;--line:#d9dcd6;--warn:#c62828}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;font-family:"Hiragino Sans","Noto Sans JP","Yu Gothic",sans-serif;background:var(--bg);color:#222;font-size:16px}
+header{background:var(--main);color:#fff;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:5}
+header h1{font-size:18px;margin:0}
+header button{background:#fff;color:var(--main);border:0;border-radius:8px;padding:8px 12px;font-weight:bold}
+.wrap{max-width:640px;margin:0 auto;padding:14px 16px 110px}
+h2{font-size:17px;margin:4px 0 12px}
+button{font:inherit;cursor:pointer}
+.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.big{padding:18px 8px;border:1px solid var(--line);border-radius:12px;background:#fff;font-size:18px}
+.big:active{background:#e8f0e8}
+.back{background:none;border:0;color:var(--main);padding:8px 0;margin-bottom:6px}
+.card{background:#fff;border-radius:12px;padding:12px;margin-bottom:10px;border:1px solid var(--line)}
+.day{font-weight:bold;margin-bottom:6px}
+.day.today{color:var(--warn)}
+.mealrow{display:flex;align-items:center;gap:6px;margin:6px 0;border-radius:8px;padding:2px}
+.mealrow.changed{background:#fff6d6}
+.mealrow .lbl{width:2.8em;font-weight:bold;flex:none}
+.seg{display:flex;flex:1;gap:4px}
+.seg button{flex:1;padding:11px 0;border:1px solid var(--line);border-radius:8px;background:#fff;font-size:15px}
+.seg button.on{background:var(--main);color:#fff;border-color:var(--main)}
+.seg button.on.none{background:#777;border-color:#777}
+.seg button:disabled{opacity:.45}
+.note{font-size:13px;color:#666;margin:2px 0 6px}
+.info{font-size:14px;color:#444;margin-bottom:10px}
+.tabs{display:flex;gap:6px;margin-bottom:12px}
+.tabs button{flex:1;padding:11px;border:1px solid var(--line);border-radius:10px;background:#fff}
+.tabs button.on{background:#333;color:#fff;border-color:#333}
+.bar{position:fixed;left:0;right:0;bottom:0;background:#fff;border-top:1px solid var(--line);padding:10px 16px}
+.bar .in{max-width:640px;margin:0 auto}
+.primary{width:100%;padding:15px;border:0;border-radius:12px;background:var(--main);color:#fff;font-size:17px;font-weight:bold}
+.primary:disabled{background:#aaa}
+.badge{display:inline-block;padding:4px 10px;border-radius:20px;font-size:13px;margin-top:6px}
+.wait{background:#fff3cd;color:#7a5b00}.ok{background:#e0f2e9;color:#1b5e3a}.ng{background:#fde0e0;color:#8a1c1c}
+.sub{margin-top:8px;padding:9px 12px;border:1px solid var(--main);color:var(--main);background:#fff;border-radius:8px}
+textarea{width:100%;min-height:70px;margin:8px 0;font:inherit;padding:8px;border:1px solid var(--line);border-radius:8px}
+#loading{position:fixed;inset:0;background:rgba(255,255,255,.6);display:flex;align-items:center;justify-content:center;z-index:20;font-weight:bold}
+#toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:#333;color:#fff;padding:12px 18px;border-radius:10px;z-index:30;max-width:90%;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<header><h1>職員食 予約</h1><button id="btnSwitch" hidden>別の人に切替</button></header>
+<div class="wrap">
+
+  <div id="vDept" hidden>
+    <h2>部署を選んでください</h2>
+    <div class="grid" id="deptBtns"></div>
+  </div>
+
+  <div id="vName" hidden>
+    <button class="back" id="backDept">← 部署選択に戻る</button>
+    <h2 id="nameTitle"></h2>
+    <div class="grid" id="nameBtns"></div>
+  </div>
+
+  <div id="vMy" hidden>
+    <h2 id="myName"></h2>
+    <div class="info" id="myInfo"></div>
+    <div class="tabs">
+      <button id="tabBook" class="on">予約・変更</button>
+      <button id="tabReq">食べられなかった申請</button>
+    </div>
+    <div id="book"></div>
+    <div id="req" hidden></div>
+  </div>
+</div>
+
+<div class="bar" id="saveBar" hidden><div class="in"><button class="primary" id="btnSave" disabled>変更はありません</button></div></div>
+<div id="loading" hidden>読み込み中…</div>
+<div id="toast" hidden></div>
+
+<script>
+const MEALS=['昼食','夕食'];
+const OPTS=[['なし',''],['普通','普通'],['大盛','大盛'],['小盛','小盛']];
+const IDLE_SEC=120; // 共用端末用：操作がないと最初の画面に戻る
+let INIT=null, SID=null, D=null, orig={}, sel={}, idleT=null;
+const $=id=>document.getElementById(id);
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+// ===== サーバー接続（Googleログイン不要・Cookieを送らない） =====
+// GASから開いた場合は自動でURLが入る。別サイトに置く場合は STANDALONE_URL に …/exec を貼る。
+const STANDALONE_URL = 'https://script.google.com/macros/s/AKfycbztZbsvvPbyW5aAgina2D9yQrY2DLne3IlXREFKecQ0tDZsnheEDpCTaEH6w1aoLdCCMA/exec';
+let API_URL = '<?= apiUrl ?>';
+if (!/^https:/.test(API_URL)) API_URL = STANDALONE_URL;
+if (!/^https:/.test(API_URL)) alert('設定エラー：ファイル内のSTANDALONE_URLに公開URLを貼ってください');
+function run(fn,...args){
+  $('loading').hidden=false;
+  return fetch(API_URL,{method:'POST',body:JSON.stringify({fn,args}),credentials:'omit',redirect:'follow',cache:'no-store'})
+    .then(r=>r.json())
+    .then(j=>{ if(!j.ok) throw new Error(j.error); return j.data; })
+    .catch(e=>{ const m=(e&&e.message)||String(e); alert(/fetch|network|JSON/i.test(m)?'通信できませんでした。電波の良い場所でもう一度お試しください。':m); throw e; })
+    .finally(()=>{ $('loading').hidden=true; });
+}
+function toast(msg){ $('toast').textContent=msg; $('toast').hidden=false; setTimeout(()=>$('toast').hidden=true,2500); }
+function show(id){
+  ['vDept','vName','vMy'].forEach(v=>$(v).hidden=(v!==id));
+  $('btnSwitch').hidden=(id==='vDept');
+  $('saveBar').hidden=!(id==='vMy' && !$('book').hidden);
+  window.scrollTo(0,0);
+}
+
+/* ---- 部署・氏名選択 ---- */
+function start(){ SID=null; D=null; orig={}; sel={}; show('vDept'); }
+function renderDepts(){
+  $('deptBtns').innerHTML=INIT.depts.map(d=>`<button class="big" data-dept="${esc(d)}">${esc(d)}</button>`).join('');
+}
+$('deptBtns').addEventListener('click',e=>{
+  const b=e.target.closest('button[data-dept]'); if(!b) return;
+  const dept=b.dataset.dept;
+  const list=INIT.staff.filter(s=>s.dept===dept);
+  $('nameTitle').textContent=dept+'：お名前を選んでください';
+  $('nameBtns').innerHTML=list.length? list.map(s=>`<button class="big" data-sid="${esc(s.id)}">${esc(s.name)}</button>`).join('')
+    : '<p class="note">この部署の職員が登録されていません</p>';
+  show('vName');
+});
+$('nameBtns').addEventListener('click',e=>{
+  const b=e.target.closest('button[data-sid]'); if(!b) return;
+  loadMy(b.dataset.sid);
+});
+$('backDept').onclick=()=>show('vDept');
+$('btnSwitch').onclick=()=>{
+  if(changes().length && !confirm('保存していない変更があります。破棄して切り替えますか？')) return;
+  start();
+};
+
+/* ---- 自分の画面 ---- */
+function loadMy(sid){
+  SID=sid;
+  return run('getMyPage',sid).then(r=>{
+    D=r; orig={};
+    r.book.forEach(o=>orig[o.date+'|'+o.meal]=o.size);
+    sel=Object.assign({},orig);
+    $('myName').textContent=r.staff.dept+'　'+r.staff.name+' さん';
+    $('myInfo').textContent=r.period+'：本日までの利用 '+r.hist.length+'食';
+    renderBook(); renderReq(); setTab('book'); show('vMy'); resetIdle();
+  });
+}
+
+function renderBook(){
+  $('book').innerHTML='<p class="note">前日までは自由に予約・変更・取消できます。当日は'+esc(D.cutoff)+'までの新規予約のみ受付（変更・取消は栄養課へ）。</p>'+
+  D.days.map(day=>{
+    const rows=MEALS.map(m=>{
+      const k=day.date+'|'+m, cur=sel[k]||'', had=orig[k]||'';
+      let lock='', dis=false;
+      if(day.isToday){
+        if(had){dis=true;lock='当日の変更・取消は栄養課へ連絡してください';}
+        else if(D.afterCutoff){dis=true;lock='本日分の受付は'+D.cutoff+'で締切（栄養課へ連絡）';}
+      }
+      const btns=OPTS.map(([t,v])=>`<button class="${cur===v?'on':''} ${v===''?'none':''}" ${dis?'disabled':''} data-k="${k}" data-v="${v}">${t}</button>`).join('');
+      return `<div class="mealrow ${cur!==had?'changed':''}"><span class="lbl">${m}</span><div class="seg">${btns}</div></div>${lock?`<div class="note">${lock}</div>`:''}`;
+    }).join('');
+    return `<div class="card"><div class="day ${day.isToday?'today':''}">${day.label}${day.isToday?'（今日）':''}</div>${rows}</div>`;
+  }).join('');
+  updateSave();
+}
+$('book').addEventListener('click',e=>{
+  const b=e.target.closest('button[data-k]'); if(!b||b.disabled) return;
+  sel[b.dataset.k]=b.dataset.v; renderBook();
+});
+
+function changes(){
+  const keys=new Set(Object.keys(orig).concat(Object.keys(sel)));
+  const out=[];
+  keys.forEach(k=>{ if((sel[k]||'')!==(orig[k]||'')){ const [date,meal]=k.split('|'); out.push({date,meal,size:sel[k]||''}); } });
+  return out;
+}
+function updateSave(){
+  const n=changes().length;
+  $('btnSave').disabled=!n;
+  $('btnSave').textContent=n? `保存する（${n}件の変更）`:'変更はありません';
+}
+$('btnSave').onclick=()=>{
+  const ch=changes(); if(!ch.length) return;
+  run('saveMyOrders',SID,ch).then(r=>{
+    if(r.msgs.length) alert((r.ok?r.ok+'件保存しました。\n\n':'')+r.msgs.join('\n'));
+    else toast(r.ok+'件 保存しました');
+    loadMy(SID);
+  });
+};
+
+/* ---- 食べられなかった申請 ---- */
+function renderReq(){
+  const head='<p class="note">受診同行などで食べられなかった場合に申請してください。申請だけでは本人請求のままです。栄養課が確認・承認すると「施設請求」になります。</p>';
+  if(!D.hist.length){ $('req').innerHTML=head+'<p class="note">今期の本日までの予約はありません。</p>'; return; }
+  $('req').innerHTML=head+D.hist.map(o=>{
+    let st;
+    if(o.req==='申請中') st='<span class="badge wait">申請中（栄養課 確認待ち）</span>';
+    else if(o.bill==='施設') st='<span class="badge ok">施設請求</span>';
+    else if(o.req==='却下') st='<span class="badge ng">却下（本人請求）</span>';
+    else st=`<button class="sub" data-open="${esc(o.id)}">食べられなかった（申請する）</button>`;
+    const reason=o.reason?`<div class="note">理由：${esc(o.reason)}</div>`:'';
+    return `<div class="card"><b>${esc(o.label)} ${esc(o.meal)}</b>（${esc(o.size)}）${reason}<div>${st}</div>
+      <div id="f_${esc(o.id)}" hidden><textarea placeholder="例：〇〇様の受診同行が長引き、昼食時間に戻れなかった"></textarea>
+      <button class="primary" data-send="${esc(o.id)}">栄養課へ申請する</button></div></div>`;
+  }).join('');
+}
+$('req').addEventListener('click',e=>{
+  const op=e.target.closest('button[data-open]');
+  if(op){ $('f_'+op.dataset.open).hidden=false; op.hidden=true; return; }
+  const sd=e.target.closest('button[data-send]');
+  if(sd){
+    const reason=$('f_'+sd.dataset.send).querySelector('textarea').value.trim();
+    if(!reason){ alert('理由を入力してください'); return; }
+    run('submitRequest',SID,sd.dataset.send,reason).then(()=>{ toast('申請しました'); loadMy(SID).then(()=>setTab('req')); });
+  }
+});
+
+function setTab(t){
+  $('tabBook').classList.toggle('on',t==='book'); $('tabReq').classList.toggle('on',t==='req');
+  $('book').hidden=t!=='book'; $('req').hidden=t!=='req';
+  $('saveBar').hidden=t!=='book';
+}
+$('tabBook').onclick=()=>setTab('book');
+$('tabReq').onclick=()=>setTab('req');
+
+/* ---- 共用端末：放置で最初に戻る ---- */
+function resetIdle(){
+  clearTimeout(idleT);
+  if(!SID) return;
+  idleT=setTimeout(()=>{ toast('一定時間操作がなかったため最初の画面に戻りました'); start(); },IDLE_SEC*1000);
+}
+['click','touchstart','keydown','scroll'].forEach(ev=>document.addEventListener(ev,resetIdle,{passive:true}));
+
+run('getInit').then(r=>{ INIT=r; renderDepts(); start(); });
+</script>
+</body>
+</html>
