@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>職員食 管理（栄養課）</title>
+<style>
+:root{--main:#2e7d5b;--bg:#f5f6f3;--line:#d9dcd6}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;font-family:"Hiragino Sans","Noto Sans JP","Yu Gothic",sans-serif;background:var(--bg);color:#222;font-size:15px}
+header{background:#35505f;color:#fff;padding:12px 16px;font-weight:bold;font-size:17px}
+.wrap{max-width:1100px;margin:0 auto;padding:14px 16px 60px}
+button{font:inherit;cursor:pointer}
+select,input,textarea{font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:#fff}
+.btn{padding:8px 14px;border:1px solid var(--line);border-radius:8px;background:#fff}
+.btn.main{background:var(--main);border-color:var(--main);color:#fff;font-weight:bold}
+.btn.red{background:#fff;border-color:#c62828;color:#c62828}
+.card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:12px}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.tabs{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+.tabs button{padding:10px 16px;border:1px solid var(--line);border-radius:10px;background:#fff}
+.tabs button.on{background:#333;color:#fff;border-color:#333}
+.cnt{display:inline-block;background:#c62828;color:#fff;border-radius:10px;padding:0 7px;font-size:12px;margin-left:4px}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;background:#fff}
+th,td{border:1px solid var(--line);padding:6px 8px;text-align:left;white-space:nowrap}
+th{background:#eef2ee}
+tr.cancel td{color:#999;background:#f3f3f3}
+tr.fac td{background:#eef7f1}
+.note{font-size:13px;color:#666}
+.sum b{font-size:18px}
+#loading{position:fixed;inset:0;background:rgba(255,255,255,.6);display:flex;align-items:center;justify-content:center;z-index:20;font-weight:bold}
+#print{display:none}
+
+/* ===== 印刷 ===== */
+@media print{
+  #app,#loading{display:none!important}
+  #print{display:block}
+  @page{size:A4 portrait;margin:8mm}
+  body{background:#fff}
+}
+#print *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.pg{page-break-after:always;font-size:12pt}
+.pg h1{font-size:16pt;margin:0 0 4mm}
+.pg table{font-size:11pt}
+.pg td,.pg th{border:1px solid #444;padding:1.5mm 2mm}
+.pg .chk{width:12mm}
+/* 半券：1枚 96mm×68mm（大きめの付箋サイズ）。A4に2列×4段＝8枚 */
+.tkpage{display:grid;grid-template-columns:96mm 96mm;grid-auto-rows:68mm;page-break-after:always}
+.tk{border:1px dashed #666;padding:3.5mm 4mm;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden}
+.tk .top{display:flex;justify-content:space-between;font-size:12pt}
+.tk .meal{font-weight:bold;padding:0 2mm;border:1px solid #000}
+.tk .meal.dinner{background:#555;color:#fff}
+.tk .nm{font-size:26pt;font-weight:bold;text-align:center;line-height:1.2}
+.tk .sz{text-align:center}
+.tk .sz span{display:inline-block;font-size:22pt;font-weight:bold;padding:1mm 8mm;border-radius:2mm}
+.tk .sz .大盛{background:#000;color:#fff}
+.tk .sz .小盛{border:1.2mm solid #000}
+.tk .sz .普通{font-size:15pt;color:#333}
+.tk .nt{font-size:10pt;text-align:center}
+</style>
+</head>
+<body>
+<div id="app">
+<header>職員食 管理（栄養課）</header>
+<div class="wrap">
+
+  <div id="vLogin" class="card">
+    <p>栄養課パスコードを入力してください</p>
+    <div class="row"><input type="password" id="pass" autocomplete="off"><button class="btn main" id="btnLogin">ログイン</button></div>
+  </div>
+
+  <div id="vMain" hidden>
+    <div class="tabs">
+      <button data-tab="tDay" class="on">当日管理・修正</button>
+      <button data-tab="tReq">申請承認<span id="reqCnt"></span></button>
+      <button data-tab="tPrint">厨房用 印刷</button>
+      <button data-tab="tClose">締め集計</button>
+    </div>
+
+    <!-- 当日管理 -->
+    <section id="tDay">
+      <div class="card row">
+        <button class="btn" id="dPrev">◀ 前日</button>
+        <input type="date" id="dDate">
+        <button class="btn" id="dNext">翌日 ▶</button>
+        <button class="btn" id="dToday">今日</button>
+        <button class="btn" id="dReload">再読込</button>
+      </div>
+      <div class="card sum" id="dSum"></div>
+      <div class="card">
+        <b>代理注文・追加</b>
+        <div class="row" style="margin-top:8px">
+          <select id="aDept"></select><select id="aStaff"></select>
+          <select id="aMeal"></select><select id="aSize"></select>
+          請求<select id="aBill"></select>
+          <input id="aNote" placeholder="備考（例：受診同行）" size="18">
+          <button class="btn main" id="aAdd">追加</button>
+        </div>
+        <p class="note">同じ人・同じ食事がすでにある場合は上書きされます。</p>
+      </div>
+      <p class="note">変更はその場で保存されます。印刷後に変更した場合は厨房へ連絡してください。「取消」＝作らない／「請求区分」＝本人・施設・なし（返金）。</p>
+      <div class="scroll" id="dList"></div>
+    </section>
+
+    <!-- 申請 -->
+    <section id="tReq" hidden>
+      <p class="note">職員から「食べられなかった（施設請求）」の申請が来ています。内容を確認して承認・却下してください。</p>
+      <div class="scroll" id="rList"></div>
+    </section>
+
+    <!-- 印刷 -->
+    <section id="tPrint" hidden>
+      <div class="card">
+        <div class="row">
+          日付 <input type="date" id="pDate">
+          食事 <select id="pMeal"><option value="">昼食・夕食</option><option>昼食</option><option>夕食</option></select>
+          <label><input type="checkbox" id="pList" checked> 提供リスト（一覧）</label>
+          <label><input type="checkbox" id="pTicket" checked> 半券（切り取り用）</label>
+          <button class="btn main" id="btnPrint">印刷する</button>
+        </div>
+        <p class="note">印刷設定：用紙 A4／倍率 100%（実際のサイズ）／「背景のグラフィック」をオン。半券は1枚 約96×68mm、A4に8枚。点線で切ってお盆へ。</p>
+      </div>
+    </section>
+
+    <!-- 締め -->
+    <section id="tClose" hidden>
+      <div class="card row">
+        締め月 <input type="month" id="cMonth">
+        <button class="btn main" id="btnClose">集計する</button>
+        <span class="note" id="cLabel"></span>
+      </div>
+      <div class="row" id="cBtns" hidden style="margin-bottom:10px">
+        <button class="btn" id="dlSum">集計CSVを保存（Excelで開けます）</button>
+        <button class="btn" id="dlDet">明細CSVを保存（確認用）</button>
+      </div>
+      <div class="scroll" id="cList"></div>
+    </section>
+  </div>
+</div>
+</div>
+
+<div id="print"></div>
+<div id="loading" hidden>処理中…</div>
+
+<script>
+let PASS='', S=null, DAY=null, CLOSE=null;
+const $=id=>document.getElementById(id);
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+// ===== サーバー接続（Googleログイン不要・Cookieを送らない） =====
+// GASから開いた場合は自動でURLが入る。別サイトに置く場合は STANDALONE_URL に …/exec を貼る。
+const STANDALONE_URL = 'https://script.google.com/macros/s/AKfycbztZbsvvPbyW5aAgina2D9yQrY2DLne3IlXREFKecQ0tDZsnheEDpCTaEH6w1aoLdCCMA/exec';
+let API_URL = '<?= apiUrl ?>';
+if (!/^https:/.test(API_URL)) API_URL = STANDALONE_URL;
+if (!/^https:/.test(API_URL)) alert('設定エラー：ファイル内のSTANDALONE_URLに公開URLを貼ってください');
+function run(fn,...args){
+  $('loading').hidden=false;
+  return fetch(API_URL,{method:'POST',body:JSON.stringify({fn,args}),credentials:'omit',redirect:'follow',cache:'no-store'})
+    .then(r=>r.json())
+    .then(j=>{ if(!j.ok) throw new Error(j.error); return j.data; })
+    .catch(e=>{ const m=(e&&e.message)||String(e); alert(/fetch|network|JSON/i.test(m)?'通信できませんでした。電波の良い場所でもう一度お試しください。':m); throw e; })
+    .finally(()=>{ $('loading').hidden=true; });
+}
+function opts(list,cur){ return list.map(v=>`<option ${v===cur?'selected':''}>${esc(v)}</option>`).join(''); }
+function addDays(s,n){ const p=s.split('-').map(Number); return new Date(Date.UTC(p[0],p[1]-1,p[2]+n)).toISOString().slice(0,10); }
+
+/* ---- ログイン ---- */
+function login(p){
+  return run('adminLogin',p).then(r=>{
+    PASS=p; S=r;
+    try{ sessionStorage.setItem('mealpass',p); }catch(e){}
+    $('vLogin').hidden=true; $('vMain').hidden=false;
+    $('dDate').value=r.today; $('pDate').value=r.today; $('cMonth').value=r.closeYm;
+    $('aDept').innerHTML='<option value="">部署</option>'+opts(r.depts);
+    $('aMeal').innerHTML=opts(r.meals); $('aSize').innerHTML=opts(r.sizes); $('aBill').innerHTML=opts(r.bills,'本人');
+    fillStaff(); loadDay();
+  });
+}
+$('btnLogin').onclick=()=>login($('pass').value.trim());
+$('pass').addEventListener('keydown',e=>{ if(e.key==='Enter') $('btnLogin').click(); });
+try{ const sp=sessionStorage.getItem('mealpass'); if(sp) login(sp).catch(()=>{}); }catch(e){}
+
+/* ---- タブ ---- */
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('.tabs button').forEach(x=>x.classList.toggle('on',x===b));
+  ['tDay','tReq','tPrint','tClose'].forEach(t=>$(t).hidden=(t!==b.dataset.tab));
+  if(b.dataset.tab==='tReq' || b.dataset.tab==='tDay') loadDay();
+});
+
+/* ---- 当日管理 ---- */
+function loadDay(){
+  return run('adminGetDay',PASS,$('dDate').value).then(r=>{ DAY=r; renderDay(); renderReq(); });
+}
+$('dPrev').onclick=()=>{ $('dDate').value=addDays($('dDate').value,-1); loadDay(); };
+$('dNext').onclick=()=>{ $('dDate').value=addDays($('dDate').value,1); loadDay(); };
+$('dToday').onclick=()=>{ $('dDate').value=S.today; loadDay(); };
+$('dReload').onclick=loadDay;
+$('dDate').onchange=loadDay;
+
+function renderDay(){
+  const act=DAY.orders.filter(o=>o.status==='予約');
+  $('dSum').innerHTML='<b>'+esc(DAY.label)+'</b>　'+S.meals.map(m=>{
+    const a=act.filter(o=>o.meal===m);
+    const c=s=>a.filter(o=>o.size===s).length;
+    return `${m}：<b>${a.length}</b>食（普通${c('普通')}・大盛${c('大盛')}・小盛${c('小盛')}）`;
+  }).join('　');
+  if(!DAY.orders.length){ $('dList').innerHTML='<p class="note">この日の予約はありません。</p>'; return; }
+  $('dList').innerHTML='<table><tr><th>食種</th><th>部署</th><th>氏名</th><th>ご飯量</th><th>状態</th><th>請求区分</th><th>備考</th><th>申請</th><th>最終更新</th></tr>'+
+    DAY.orders.map(o=>`<tr class="${o.status==='取消'?'cancel':o.bill==='施設'?'fac':''}">
+      <td>${esc(o.meal)}</td><td>${esc(o.dept)}</td><td>${esc(o.name)}</td>
+      <td><select data-id="${esc(o.id)}" data-f="size">${opts(S.sizes,o.size)}</select></td>
+      <td><select data-id="${esc(o.id)}" data-f="status">${opts(S.statuses,o.status)}</select></td>
+      <td><select data-id="${esc(o.id)}" data-f="bill">${opts(S.bills,o.bill)}</select></td>
+      <td><input data-id="${esc(o.id)}" data-f="note" value="${esc(o.note)}" size="16"></td>
+      <td>${o.req?esc(o.req)+(o.reason?'：'+esc(o.reason):''):''}</td>
+      <td class="note">${esc(o.updated)}</td></tr>`).join('')+'</table>';
+}
+$('dList').addEventListener('change',e=>{
+  const el=e.target.closest('[data-id]'); if(!el) return;
+  const f={}; f[el.dataset.f]=el.value;
+  run('adminUpdate',PASS,el.dataset.id,f).then(loadDay);
+});
+
+function fillStaff(){
+  const d=$('aDept').value;
+  const list=S.staff.filter(s=>!d||s.dept===d);
+  $('aStaff').innerHTML='<option value="">氏名</option>'+list.map(s=>`<option value="${esc(s.id)}">${esc(s.name)}（${esc(s.dept)}）</option>`).join('');
+}
+$('aDept').onchange=fillStaff;
+$('aAdd').onclick=()=>{
+  const a={date:$('dDate').value,sid:$('aStaff').value,meal:$('aMeal').value,size:$('aSize').value,bill:$('aBill').value,note:$('aNote').value};
+  if(!a.sid){ alert('氏名を選んでください'); return; }
+  run('adminAdd',PASS,a).then(()=>{ $('aNote').value=''; loadDay(); });
+};
+
+/* ---- 申請承認 ---- */
+function renderReq(){
+  const p=DAY.pending;
+  $('reqCnt').innerHTML=p.length?`<span class="cnt">${p.length}</span>`:'';
+  if(!p.length){ $('rList').innerHTML='<p class="note">未処理の申請はありません。</p>'; return; }
+  $('rList').innerHTML='<table><tr><th>日付</th><th>食種</th><th>部署</th><th>氏名</th><th>理由</th><th>処理</th></tr>'+
+    p.map(o=>`<tr><td>${esc(o.label)}</td><td>${esc(o.meal)}</td><td>${esc(o.dept)}</td><td>${esc(o.name)}</td>
+      <td style="white-space:normal">${esc(o.reason)}</td>
+      <td><button class="btn main" data-ok="${esc(o.id)}">承認（施設請求）</button>
+          <button class="btn red" data-ng="${esc(o.id)}">却下（本人請求）</button></td></tr>`).join('')+'</table>';
+}
+$('rList').addEventListener('click',e=>{
+  const ok=e.target.closest('[data-ok]'), ng=e.target.closest('[data-ng]');
+  if(ok) run('adminResolve',PASS,ok.dataset.ok,true).then(loadDay);
+  if(ng && confirm('却下して本人請求にしますか？')) run('adminResolve',PASS,ng.dataset.ng,false).then(loadDay);
+});
+
+/* ---- 印刷 ---- */
+$('btnPrint').onclick=()=>{
+  if(!$('pList').checked && !$('pTicket').checked){ alert('印刷するものを選んでください'); return; }
+  run('adminPrintData',PASS,$('pDate').value).then(r=>{
+    const meal=$('pMeal').value;
+    const list=meal? r.orders.filter(o=>o.meal===meal) : r.orders;
+    if(!list.length){ alert('この日の予約はありません'); return; }
+    let html='';
+    if($('pList').checked) html+=listHtml(r,list);
+    if($('pTicket').checked) html+=ticketHtml(r,list);
+    $('print').innerHTML=html;
+    setTimeout(()=>window.print(),300);
+  });
+};
+function listHtml(r,list){
+  return S.meals.filter(m=>list.some(o=>o.meal===m)).map(m=>{
+    const a=list.filter(o=>o.meal===m);
+    const c=s=>a.filter(o=>o.size===s).length;
+    return `<div class="pg"><h1>職員食 提供リスト　${esc(r.label)}　${m}</h1>
+      <p>合計 <b>${a.length}食</b>（普通 ${c('普通')}／大盛 ${c('大盛')}／小盛 ${c('小盛')}）　※${esc(r.printedAt)} 時点。以降の変更は栄養課から連絡</p>
+      <table><tr><th>No</th><th>部署</th><th>氏名</th><th>ご飯量</th><th>備考</th><th class="chk">提供</th></tr>
+      ${a.map((o,i)=>`<tr><td>${i+1}</td><td>${esc(o.dept)}</td><td>${esc(o.name)}</td><td>${o.size==='普通'?'普通':'<b>'+esc(o.size)+'</b>'}</td><td>${esc(o.note)}</td><td></td></tr>`).join('')}
+      </table></div>`;
+  }).join('');
+}
+function ticketHtml(r,list){
+  const per=8, pages=[];
+  for(let i=0;i<list.length;i+=per) pages.push(list.slice(i,i+per));
+  return pages.map(pg=>`<div class="tkpage">${pg.map(o=>`
+    <div class="tk">
+      <div class="top"><span>${esc(r.label)} <span class="meal ${o.meal==='夕食'?'dinner':''}">${esc(o.meal)}</span></span><span>${esc(o.dept)}</span></div>
+      <div class="nm">${esc(o.name)}</div>
+      <div class="sz"><span class="${esc(o.size)}">${esc(o.size)}</span></div>
+      <div class="nt">${esc(o.note)}</div>
+    </div>`).join('')}</div>`).join('');
+}
+
+/* ---- 締め ---- */
+$('btnClose').onclick=()=>{
+  run('adminClose',PASS,$('cMonth').value).then(r=>{
+    CLOSE=r;
+    $('cLabel').textContent=r.label+'（単価 '+r.price+'円）／スプレッドシートの「'+r.sheetName+'」にも出力済み';
+    $('cBtns').hidden=false;
+    $('cList').innerHTML=r.rows.length? '<table><tr>'+r.header.map(h=>`<th>${esc(h)}</th>`).join('')+'</tr>'+
+      r.rows.concat([r.total]).map(row=>'<tr>'+row.map(v=>`<td>${esc(v)}</td>`).join('')+'</tr>').join('')+'</table>'
+      : '<p class="note">この期間の利用はありません。</p>';
+  });
+};
+function dlCsv(name,rows){
+  const csv='\ufeff'+rows.map(r=>r.map(v=>{ v=String(v==null?'':v); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; }).join(',')).join('\r\n');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+  a.download=name; document.body.appendChild(a); a.click(); a.remove();
+}
+$('dlSum').onclick=()=>dlCsv('職員食_集計_'+CLOSE.ym+'.csv',[[CLOSE.label]].concat([CLOSE.header],CLOSE.rows,[CLOSE.total]));
+$('dlDet').onclick=()=>dlCsv('職員食_明細_'+CLOSE.ym+'.csv',[[CLOSE.label]].concat([CLOSE.dHeader],CLOSE.detail));
+</script>
+</body>
+</html>
